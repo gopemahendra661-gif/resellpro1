@@ -20,44 +20,58 @@ export async function POST(req: NextRequest) {
 
     const $ = cheerio.load(html);
 
-    // Title extraction (multiple fallbacks)
+    // Title extraction with multiple fallbacks
     let title =
       $('h1[data-testid="product-title"]').text().trim() ||
       $('h1.product-title').text().trim() ||
-      $('title').text().replace(' - Meesho', '').trim() ||
+      $('h1[class*="title"]').text().trim() ||
+      $('title').text().replace(/ - Meesho.*/i, '').trim() ||
       '';
 
+    // Clean title
+    title = title.replace(/\s+/g, ' ').trim();
+
     // Price extraction
+    let price: number | null = null;
     let priceText =
       $('.pdp-price').text().trim() ||
       $('span[data-testid="price"]').text().trim() ||
       $('span.CxNYUP').text().trim() ||
+      $('h4').text().trim() ||
       '';
 
     const priceMatch = priceText.match(/₹(\d+)/);
-    const price = priceMatch ? parseInt(priceMatch[1], 10) : null;
+    if (priceMatch) {
+      price = parseInt(priceMatch[1], 10);
+    }
 
-    if (!title || price === null) {
-      // Try regex fallback on whole HTML
+    // Fallback: search entire HTML for price
+    if (price === null) {
       const htmlPriceMatch = html.match(/₹(\d+)/);
-      if (!price) {
-        if (htmlPriceMatch) {
-          price = parseInt(htmlPriceMatch[1], 10);
-        } else {
-          return Response.json(
-            { error: 'Price not found. Invalid or unsupported product page.' },
-            { status: 400 }
-          );
-        }
+      if (htmlPriceMatch) {
+        price = parseInt(htmlPriceMatch[1], 10);
       }
     }
 
-    // Extract images
+    if (!title || price === null) {
+      return Response.json(
+        { error: 'Price or title not found. Invalid or unsupported product page.' },
+        { status: 400 }
+      );
+    }
+
+    // Extract images (only Meesho-hosted, non-placeholder)
     const images: string[] = [];
     $('img').each((_, el) => {
-      const src = $(el).attr('src') || $(el).attr('data-src');
-      if (src && src.includes('meesho') && !src.includes('placeholder') && !images.includes(src)) {
-        images.push(src);
+      let src = $(el).attr('src') || $(el).attr('data-src') || '';
+      if (src && src.includes('meesho') && !src.includes('placeholder')) {
+        // Convert relative to absolute if needed (rare on Meesho, but safe)
+        if (src.startsWith('//')) {
+          src = 'https:' + src;
+        }
+        if (!images.includes(src)) {
+          images.push(src);
+        }
       }
     });
 
